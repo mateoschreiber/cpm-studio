@@ -1,65 +1,58 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useReactFlow, type Connection } from "@xyflow/react";
 import {
   ArrowRight,
-  ArrowUpRight,
   ChartNoAxesCombined,
   Check,
   ChevronDown,
-  CirclePlus,
-  Download,
   FileJson,
   FilePlus2,
   FolderOpen,
-  Grid2X2,
   HelpCircle,
-  Magnet,
-  Maximize,
-  MousePointer2,
   Network,
-  Redo2,
   Route,
   Save,
-  Settings2,
   Table2,
-  Trash2,
   TriangleAlert,
-  Undo2,
   Workflow,
   X,
+  CalendarDays, BarChart3, BookOpen, Files, FileText, Moon, Sun, Diamond,
 } from "lucide-react";
 import {
   emptyProject,
   defaultEdgeVisual,
+  defaultPresentation,
   type Project,
   type TableRow,
+  type AppView,
 } from "./core/types";
 import {
   extractPrecedences,
-  solveCPM,
-  validateGraph,
   validateTable,
 } from "./core/engine";
 import { generateAOA } from "./core/generate";
 import { fourteenRows, guideProject } from "./core/fixtures";
 import {
   downloadFile,
-  loadProject,
   parseProject,
-  saveProject,
   serializeProject,
 } from "./services/persistence";
-import { exportPNG, exportSVG } from "./services/export";
-import { layoutProject } from "./services/layout";
-import { numberText, uid, useProjectStore } from "./store";
-import { NetworkCanvas, type Tool } from "./components/NetworkCanvas";
-import { Inspector } from "./components/Inspector";
+import { generateInWorker, layoutInWorker, cancelJobs } from './services/jobs';
+import { displayProject, repairVisual } from './services/presentation';
+import { useLibrary } from './hooks/useLibrary';
+import { usePWA } from './hooks/usePWA';
+import {useCPM} from './hooks/useCPM';
+import { LibraryDialog } from './components/LibraryDialog';
+import { currentVisual, numberText, uid, useProjectStore } from "./store";
+import type { Tool } from "./components/NetworkCanvas";
+import { EditorWorkspace } from "./components/EditorWorkspace";
 import { ActivityTable } from "./components/ActivityTable";
 import { Results } from "./components/Results";
 import { CommitInput } from "./components/Fields";
 
-const recovered = loadProject();
-if (recovered.project) useProjectStore.setState({ project: recovered.project });
+const SolutionView=lazy(()=>import('./components/SolutionView'));
+const ReportView=lazy(()=>import('./components/ReportView'));
+const TemporalViews=lazy(()=>import('./components/TemporalViews').then(m=>({default:m.TemporalViews})));
 
 type Confirmation = {
   title: string;
@@ -70,8 +63,15 @@ type Confirmation = {
 type PanelTab = "activities" | "results" | "validation";
 
 export default function App() {
-  const { project, edit, replace, undo, redo, past, future } =
-    useProjectStore();
+  const project=useProjectStore(s=>s.project),edit=useProjectStore(s=>s.edit),replace=useProjectStore(s=>s.replace),undo=useProjectStore(s=>s.undo),redo=useProjectStore(s=>s.redo),setPresentation=useProjectStore(s=>s.setPresentation);
+  const library=useLibrary(),pwa=usePWA();
+  const [libraryOpen,setLibraryOpen]=useState(false);
+  const view=project.presentation?.activeView??'network';
+  const shownProject=useMemo(()=>displayProject(project),[project]);
+  const tableProject=useMemo(()=>({...emptyProject(),id:project.id,name:project.name,events:project.events,activities:project.activities,presentation:{...defaultPresentation(),draftRows:project.presentation?.draftRows}}),[project.id,project.name,project.events,project.activities,project.presentation?.draftRows]);
+  const requestRowsRef=useRef<(rows:TableRow[])=>Promise<void>>(async()=>{});
+  const applyRows=useCallback((rows:TableRow[])=>{void requestRowsRef.current(rows);},[]);
+  const updateScalar=useCallback((id:string,patch:Partial<Pick<TableRow,'duration'|'resources'>>)=>edit(p=>{const activity=p.activities.find(a=>a.id===id);if(activity&&!activity.dummy)Object.assign(activity,patch);}),[edit]);
   const [tool, setTool] = useState<Tool>("select");
   const [selectedNodes, setSelectedNodes] = useState<string[]>([]);
   const [selectedEdges, setSelectedEdges] = useState<string[]>([]);
@@ -80,39 +80,15 @@ export default function App() {
   const [dirty, setDirty] = useState(false);
   const [tableEpoch, setTableEpoch] = useState(0);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
-  const [notice, setNotice] = useState(recovered.error ?? "");
-  const [saved, setSaved] = useState(!recovered.error);
+  const [notice, setNotice] = useState('');
+  const saved=library.ready&&!library.saving&&!library.error;
   const [busy, setBusy] = useState(false);
   const [help, setHelp] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
-  const autoSaveBlocked = useRef(!!recovered.error);
-  const originalProject = useRef(project);
   const latestRequest = useRef(0);
   const { fitView, screenToFlowPosition } = useReactFlow();
-  const graphSignature = JSON.stringify({
-    events: project.events,
-    activities: project.activities,
-  });
-  const { result, errors } = useMemo(() => {
-    const errors = validateGraph(project);
-    if (errors.length) return { result: undefined, errors };
-    try {
-      return { result: solveCPM(project), errors };
-    } catch (e) {
-      return { result: undefined, errors: [(e as Error).message] };
-    }
-  }, [graphSignature]);
-  useEffect(() => {
-    if (autoSaveBlocked.current && project === originalProject.current) return;
-    autoSaveBlocked.current = false;
-    setSaved(false);
-    const timer = window.setTimeout(() => {
-      const error = saveProject(project);
-      setSaved(!error);
-      if (error) setNotice(error);
-    }, 300);
-    return () => window.clearTimeout(timer);
-  }, [project]);
+  const {result,errors}=useCPM();
+  useEffect(()=>{const media=matchMedia('(prefers-color-scheme: dark)'); const apply=()=>{document.documentElement.dataset.theme=project.presentation?.theme==='system'?(media.matches?'dark':'light'):project.presentation?.theme??'light';document.documentElement.dataset.motion=project.presentation?.motion===false?'reduced':'full';};apply();media.addEventListener('change',apply);return()=>media.removeEventListener('change',apply);},[project.presentation?.theme,project.presentation?.motion]);
   const onSelection = useCallback((nodes?: string[], edges?: string[]) => {
     if (nodes !== undefined)
       setSelectedNodes((prev) =>
@@ -123,12 +99,14 @@ export default function App() {
         JSON.stringify(prev) === JSON.stringify(edges) ? prev : edges,
       );
   }, []);
-  function reframe() {
-    window.setTimeout(() => void fitView({ padding: 0.25, duration: 250 }), 80);
-  }
+  const reframe=useCallback(() => {
+    const duration=useProjectStore.getState().project.presentation?.motion===false||matchMedia('(prefers-reduced-motion: reduce)').matches?0:220;
+    window.setTimeout(() => void fitView({ padding: 0.25, duration }), 80);
+  },[fitView]);
   useEffect(() => {
-    if (recovered.project?.events.length) reframe();
-  }, []);
+    if (library.ready&&useProjectStore.getState().project.events.length) reframe();
+  }, [library.ready,project.id,reframe]);
+  function changeView(next:AppView){if(next==='resolved'&&!project.presentation?.resolved)setPresentation({activeView:next,resolved:structuredClone(project.visual)});else setPresentation({activeView:next});setTool('select');setConnectionStart(null);}
   function install(next: Project, frame = false) {
     replace(next);
     setSelectedNodes([]);
@@ -249,6 +227,7 @@ export default function App() {
       edges: string[] = [];
     edit((p) => {
       const ids = new Map<string, string>();
+      const visual=currentVisual(p);
       for (const old of project.events.filter((e) =>
         selectedNodes.includes(e.id),
       )) {
@@ -258,7 +237,7 @@ export default function App() {
         let label = 0;
         while (p.events.some((e) => e.label === String(label))) label++;
         p.events.push({ id, label: String(label) });
-        const pos = p.visual.nodes[old.id];
+        const pos = visual.nodes[old.id];
         p.visual.nodes[id] = { x: pos.x + 40, y: pos.y + 40 };
       }
       for (const a of project.activities.filter(
@@ -280,9 +259,9 @@ export default function App() {
           target: ids.get(a.target) ?? a.target,
         });
         p.visual.edges[id] = {
-          ...(p.visual.edges[a.id] ?? defaultEdgeVisual()),
+          ...(visual.edges[a.id] ?? defaultEdgeVisual()),
           kind: "curve",
-          bend: (p.visual.edges[a.id]?.bend ?? 0) + 60,
+          bend: (visual.edges[a.id]?.bend ?? 0) + 60,
         };
       }
     });
@@ -345,21 +324,19 @@ export default function App() {
       return;
     }
     const request = ++latestRequest.current;
+    setBusy(true);
     try {
-      let next = rows.length
-        ? generateAOA(rows, current)
+      const next = rows.length
+        ? await generateInWorker(rows, current)
         : {
             ...emptyProject(),
             name: current.name,
             preferences: current.preferences,
           };
-      if (!current.events.length && rows.length) {
-        setBusy(true);
-        next = await layoutProject(next);
-      }
+      next.id=current.id; next.presentation={...current.presentation!,draftRows:undefined,resolved:current.presentation?.resolved?repairVisual(next,current.presentation.resolved):undefined};
       if (
         request !== latestRequest.current ||
-        current !== useProjectStore.getState().project
+        current.activities !== useProjectStore.getState().project.activities || current.events !== useProjectStore.getState().project.events
       )
         return;
       const deletedEvents = current.events.filter(
@@ -374,6 +351,7 @@ export default function App() {
             n.id === a.id && (a.source !== n.source || a.target !== n.target),
         ),
       );
+      const applyGenerated=()=>{const latest=useProjectStore.getState().project;install({...next,id:latest.id,name:latest.name,preferences:latest.preferences,visual:repairVisual(next,latest.visual),presentation:{...latest.presentation!,draftRows:undefined,resolved:latest.presentation?.resolved?repairVisual(next,latest.presentation.resolved):undefined}},!current.events.length);};
       if (deletedEvents.length || deletedEdges.length || reconnected.length)
         setConfirmation({
           title: "Actualizar la estructura de la red",
@@ -385,39 +363,42 @@ export default function App() {
             `${reconnected.length} actividades reconectadas`,
           ],
           apply: () => {
-            if (current !== useProjectStore.getState().project) {
+            if (current.activities !== useProjectStore.getState().project.activities || current.events !== useProjectStore.getState().project.events) {
               setNotice(
                 "La red cambió mientras confirmabas. Aplica nuevamente el borrador.",
               );
               return;
             }
-            install(next);
+            applyGenerated();
           },
         });
-      else install(next, !current.events.length);
+      else applyGenerated();
     } catch (e) {
-      setNotice((e as Error).message);
+      if((e as Error).name!=='AbortError')setNotice((e as Error).message);
     } finally {
       if (request === latestRequest.current) setBusy(false);
     }
   }
+  requestRowsRef.current=requestRows;
   async function arrange() {
     if (!project.events.length) return;
     const current = project;
+    const request=++latestRequest.current;
     setBusy(true);
     try {
-      const next = await layoutProject(current);
-      if (useProjectStore.getState().project === current) {
+      let next = await layoutInWorker(shownProject);
+      if(view==='resolved')next={...current,presentation:{...current.presentation!,resolved:next.visual}};
+      if (request===latestRequest.current&&useProjectStore.getState().project === current) {
         replace(next);
         reframe();
       } else
         setNotice(
           "La red cambió durante la distribución. Vuelve a solicitarla.",
         );
-    } catch {
-      setNotice("No se pudo distribuir esta red. Tus posiciones se conservan.");
+    } catch (error) {
+      if((error as Error).name!=='AbortError')setNotice("No se pudo distribuir esta red. Tus posiciones se conservan.");
     } finally {
-      setBusy(false);
+      if(request===latestRequest.current)setBusy(false);
     }
   }
   const criticalCount = result
@@ -425,8 +406,9 @@ export default function App() {
         (a) => !a.dummy && result.activities[a.id].critical,
       ).length
     : 0;
+  if(!library.ready)return <div className="app-loading"><Route size={38}/><h1>CPM Studio</h1><p>Abriendo tu espacio de trabajo…</p></div>;
   return (
-    <div className="app-shell">
+    <div className="app-shell" aria-busy={busy}>
       <header className="app-header">
         <a className="brand" href="#" onClick={(e) => e.preventDefault()}>
           <span className="brand-mark">
@@ -442,6 +424,7 @@ export default function App() {
           <span />
           Local · sin conexión requerida
         </span>
+        <button className="icon-button" aria-label="Cambiar tema" title="Cambiar tema" onClick={()=>setPresentation({theme:document.documentElement.dataset.theme==='dark'?'light':'dark'})}>{document.documentElement.dataset.theme==='dark'?<Sun size={19}/>:<Moon size={19}/>}</button>
         <button
           className="icon-button help-button"
           aria-label="Ayuda y atajos"
@@ -485,7 +468,7 @@ export default function App() {
           >
             <HelpCircle size={21} />
           </button>
-          <span className="rail-version">v0.1</span>
+          <span className="rail-version">v0.2</span>
         </nav>
         <main className="workspace">
           <div className="project-heading">
@@ -509,7 +492,7 @@ export default function App() {
                 <span className={saved ? "status-dot" : "status-dot unsaved"} />
                 {saved
                   ? "Guardado en este navegador"
-                  : autoSaveBlocked.current
+                  : library.error
                     ? "Recuperación pendiente"
                     : "Guardando…"}
                 <span className="status-separator">·</span>
@@ -518,6 +501,7 @@ export default function App() {
               </div>
             </div>
             <div className="project-actions">
+              <button onClick={()=>{void library.refresh();setLibraryOpen(true);}}><Files size={16}/><span>Proyectos</span></button>
               <button
                 title="Nuevo proyecto"
                 onClick={() =>
@@ -548,15 +532,16 @@ export default function App() {
               </button>
             </div>
           </div>
-          {!!notice && (
+          {!!(notice||library.error) && (
             <div className="notice" role="status">
               <TriangleAlert size={16} />
-              <span>{notice}</span>
-              <button aria-label="Cerrar aviso" onClick={() => setNotice("")}>
+              <span>{notice||library.error}</span>
+              <button aria-label="Cerrar aviso" onClick={() => {setNotice('');library.setError(null);}}>
                 <X size={15} />
               </button>
             </div>
           )}
+          {(pwa.offlineReady||pwa.needRefresh)&&<div className="pwa-banner" role="status"><Check size={16}/><span>{pwa.needRefresh?'Hay una actualización disponible. Guarda tu trabajo antes de aplicarla.':'Aplicación lista para trabajar sin conexión, incluidas todas sus vistas.'}</span>{pwa.needRefresh&&<button disabled={!saved||dirty||busy} onClick={async()=>{if(await library.flushAndSave())await pwa.applyUpdate();}}>Aplicar actualización</button>}<button aria-label="Cerrar aviso offline" onClick={pwa.dismiss}><X size={15}/></button></div>}
           <div className="summary-strip">
             <div className="summary-item">
               <span className="summary-icon">
@@ -607,239 +592,25 @@ export default function App() {
               </div>
             </div>
           </div>
-          <section className="editor-card" aria-label="Editor de red">
-            <div className="editor-toolbar">
-              <div
-                className="tool-group"
-                role="toolbar"
-                aria-label="Herramientas del editor"
-              >
-                {(
-                  [
-                    {
-                      id: "select",
-                      icon: MousePointer2,
-                      label: "Seleccionar",
-                      shortcut: "V",
-                    },
-                    {
-                      id: "event",
-                      icon: CirclePlus,
-                      label: "Suceso",
-                      shortcut: "N",
-                    },
-                    {
-                      id: "activity",
-                      icon: ArrowUpRight,
-                      label: "Actividad",
-                      shortcut: "A",
-                    },
-                    {
-                      id: "dummy",
-                      icon: Workflow,
-                      label: "Ficticia",
-                      shortcut: "",
-                    },
-                  ] as const
-                ).map((t) => (
-                  <button
-                    key={t.id}
-                    className={tool === t.id ? "active" : ""}
-                    title={`${t.label}${t.shortcut ? ` (${t.shortcut})` : ""}`}
-                    onClick={() => {
-                      setTool(t.id);
-                      setConnectionStart(null);
-                    }}
-                  >
-                    <t.icon size={17} />
-                    <span>{t.label}</span>
-                  </button>
-                ))}
-              </div>
-              <div className="toolbar-separator" />
-              <div className="tool-group">
-                <button
-                  aria-label="Deshacer"
-                  title="Deshacer (Ctrl+Z)"
-                  disabled={!past.length}
-                  onClick={undo}
-                >
-                  <Undo2 size={17} />
-                </button>
-                <button
-                  aria-label="Rehacer"
-                  title="Rehacer (Ctrl+Mayús+Z)"
-                  disabled={!future.length}
-                  onClick={redo}
-                >
-                  <Redo2 size={17} />
-                </button>
-                <button
-                  aria-label="Eliminar selección"
-                  title="Eliminar selección (Supr)"
-                  disabled={!selectedNodes.length && !selectedEdges.length}
-                  onClick={removeSelection}
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-              <div className="toolbar-spacer" />
-              <div className="tool-group view-tools">
-                <button
-                  aria-label="Cuadrícula"
-                  title="Mostrar cuadrícula"
-                  className={project.preferences.grid ? "active-subtle" : ""}
-                  onClick={() =>
-                    edit((p) => {
-                      p.preferences.grid = !p.preferences.grid;
-                    })
-                  }
-                >
-                  <Grid2X2 size={16} />
-                </button>
-                <button
-                  aria-label="Ajuste magnético"
-                  title="Ajuste magnético"
-                  className={project.preferences.snap ? "active-subtle" : ""}
-                  onClick={() =>
-                    edit((p) => {
-                      p.preferences.snap = !p.preferences.snap;
-                    })
-                  }
-                >
-                  <Magnet size={16} />
-                </button>
-                <button
-                  aria-label="Ajustar a pantalla"
-                  title="Ajustar a pantalla"
-                  onClick={() => void fitView({ padding: 0.25, duration: 250 })}
-                >
-                  <Maximize size={16} />
-                </button>
-              </div>
-              <button
-                className="arrange-button"
-                disabled={busy || !project.events.length}
-                onClick={arrange}
-              >
-                <Workflow size={15} />
-                <span>{busy ? "Procesando…" : "Distribuir"}</span>
-              </button>
-              <details className="toolbar-menu">
-                <summary
-                  title="Opciones de visualización"
-                  aria-label="Opciones de visualización"
-                >
-                  <Settings2 size={17} />
-                  <ChevronDown size={12} />
-                </summary>
-                <div className="menu-popover">
-                  {(
-                    [
-                      { key: "showLabels", label: "Numeración de sucesos" },
-                      { key: "showDates", label: "Fechas y márgenes" },
-                      { key: "highlight", label: "Resaltado crítico" },
-                    ] as const
-                  ).map((o) => (
-                    <label className="check-label" key={o.key}>
-                      <input
-                        type="checkbox"
-                        checked={project.preferences[o.key]}
-                        onChange={(e) =>
-                          edit((p) => {
-                            p.preferences[o.key] = e.target.checked;
-                          })
-                        }
-                      />
-                      {o.label}
-                    </label>
-                  ))}
-                  <label>
-                    Color crítico
-                    <input
-                      type="color"
-                      aria-label="Color crítico"
-                      value={project.preferences.criticalColor}
-                      onChange={(e) =>
-                        edit((p) => {
-                          p.preferences.criticalColor = e.target.value;
-                        })
-                      }
-                    />
-                  </label>
-                </div>
-              </details>
-              <details className="toolbar-menu">
-                <summary aria-label="Exportar diagrama">
-                  <Download size={16} />
-                  <span>Exportar</span>
-                  <ChevronDown size={12} />
-                </summary>
-                <div className="menu-popover">
-                  <button
-                    onClick={() =>
-                      downloadFile(
-                        `${project.name}.svg`,
-                        exportSVG(project, result),
-                        "image/svg+xml",
-                      )
-                    }
-                  >
-                    <Download size={15} />
-                    Diagrama SVG
-                  </button>
-                  <button
-                    onClick={() =>
-                      void exportPNG(project, result).catch((e) =>
-                        setNotice((e as Error).message),
-                      )
-                    }
-                  >
-                    <Download size={15} />
-                    Diagrama PNG
-                  </button>
-                </div>
-              </details>
-            </div>
-            <div className="editor-main">
-              <NetworkCanvas
-                project={project}
-                result={result}
-                tool={tool}
-                selectedNodes={selectedNodes}
-                selectedEdges={selectedEdges}
-                onSelection={onSelection}
-                onAddEvent={newEvent}
-                onConnect={connect}
-                onEventClick={clickEvent}
-              />
-              <Inspector
-                project={project}
-                result={result}
-                selectedNodes={selectedNodes}
-                selectedEdges={selectedEdges}
-                onDuplicate={duplicateSelection}
-                onDelete={removeSelection}
-              />
-            </div>
-            <div className="editor-statusbar">
-              <div>
-                <span
-                  className="legend-line critical"
-                  style={{ borderTopColor: project.preferences.criticalColor }}
-                />
-                Camino crítico <span className="legend-line" />
-                Actividad <span className="legend-line dummy" />
-                Ficticia
-              </div>
-              <span>
-                {connectionStart
-                  ? `Origen seleccionado: ${project.events.find((e) => e.id === connectionStart)?.label}. Elige el destino.`
-                  : "Los cambios visuales no alteran el cálculo."}
-              </span>
-            </div>
-          </section>
-          <section className="data-card" aria-label="Datos del proyecto">
+          <nav className="workspace-view-tabs" aria-label="Módulos académicos">{([{id:'network',label:'Red lógica',icon:Network},{id:'resolved',label:'Red resuelta',icon:Diamond},{id:'solution',label:'Resolución',icon:BookOpen},{id:'calendar',label:'Calendario',icon:CalendarDays},{id:'gantt',label:'Gantt',icon:BarChart3},{id:'resources',label:'Recursos',icon:ChartNoAxesCombined},{id:'report',label:'Informe',icon:FileText}] as const).map(item=><button key={item.id} className={view===item.id?'active':''} aria-current={view===item.id?'page':undefined} onClick={()=>changeView(item.id)}><item.icon size={17}/>{item.label}</button>)}</nav>
+          <Suspense fallback={<div className="view-loading">Preparando vista…</div>}>
+            {view==='solution'&&<SolutionView project={project} result={result} onSelect={(id,activity)=>onSelection(activity?[]:[id],activity?[id]:[])}/>}
+            {(['calendar','gantt','resources'] as string[]).includes(view)&&(result?<TemporalViews kind={view as 'calendar'|'gantt'|'resources'} project={project} result={result} selectedId={selectedEdges[0]} onSelect={id=>onSelection([],[id])}/>:<div className="view-empty"><h2>Completa una red válida</h2><p>Los diagramas temporales requieren fechas calculadas.</p></div>)}
+            {view==='report'&&<ReportView project={project} result={result}/>}
+          </Suspense>
+          <EditorWorkspace
+            project={project} shownProject={shownProject} result={result}
+            tool={tool} setTool={setTool}
+            selectedNodes={selectedNodes} selectedEdges={selectedEdges}
+            connectionStart={connectionStart} setConnectionStart={setConnectionStart}
+            busy={busy} onSelection={onSelection} newEvent={newEvent}
+            connect={connect} clickEvent={clickEvent}
+            duplicateSelection={duplicateSelection} removeSelection={removeSelection}
+            arrange={arrange} setNotice={setNotice}
+            onFitView={reframe}
+            onCancelOperation={() => { cancelJobs(); setBusy(false); latestRequest.current++; }}
+          />
+          <section className="data-card" aria-label="Datos del proyecto" hidden={!['network','resolved'].includes(view)}>
             <div
               className="data-tabs"
               role="tablist"
@@ -908,23 +679,18 @@ export default function App() {
             </div>
             <div hidden={tab !== "activities"} role="tabpanel">
               <ActivityTable
-                project={project}
+                key={project.id}
+                project={tableProject}
                 syncToken={tableEpoch}
-                onApply={(rows) => void requestRows(rows)}
-                onScalar={(id, patch) =>
-                  edit((p) => {
-                    const activity = p.activities.find((a) => a.id === id);
-                    if (activity && !activity.dummy)
-                      Object.assign(activity, patch);
-                  })
-                }
+                onApply={applyRows}
+                onScalar={updateScalar}
                 onDraftState={setDirty}
                 busy={busy}
               />
             </div>
             <div hidden={tab !== "results"} role="tabpanel">
               <Results
-                project={project}
+                project={tableProject}
                 result={result}
                 errors={errors}
                 dirty={dirty}
@@ -1001,6 +767,7 @@ export default function App() {
           }
         }}
       />
+      {libraryOpen&&<LibraryDialog projects={library.projects} onOpen={id=>{void library.open(id);setLibraryOpen(false);setSelectedEdges([]);setSelectedNodes([]);}} onDelete={id=>void library.remove(id)} onDuplicate={id=>void library.duplicate(id)} onRename={(id,name)=>void library.rename(id,name)} onClose={()=>setLibraryOpen(false)}/>}
       {confirmation && (
         <Modal title={confirmation.title} onClose={() => setConfirmation(null)}>
           <p>{confirmation.description}</p>
@@ -1057,7 +824,7 @@ export default function App() {
             <dd>Cancelar conexión o selección</dd>
           </dl>
           <p className="field-help">
-            Las duraciones usan unidades de tiempo abstractas. Este MVP calcula
+            Las duraciones usan unidades de tiempo abstractas. La herramienta calcula
             CPM determinista; no incluye PERT probabilístico ni nivelación de
             recursos. Guarda un JSON para trasladar el proyecto a otro
             navegador.

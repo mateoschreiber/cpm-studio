@@ -1,59 +1,67 @@
 # CPM Studio
 
-Editor local de redes de camino crítico, en español. Incluye edición manual AOA, tabla de precedencias sincronizada, cálculo CPM, rutas críticas, guardado JSON y exportación SVG/PNG. React, TypeScript, Vite, React Flow, ELK.js y Zustand; sin backend ni cuentas.
+Herramienta académica de camino crítico, en español, ejecutada íntegramente en el navegador. Incluye editor AOA, resolución CPM determinista paso a paso, diagramas calendario/Gantt y perfiles de recursos. React, TypeScript, Vite, React Flow, ELK.js y Zustand; sin backend, cuentas ni servicios externos de cálculo.
 
 ## Ejecutar
 
-Se recomienda Node.js 24 y npm. Desde la carpeta del proyecto, en PowerShell, Bash o una terminal equivalente:
+Usar Node.js 22 o superior y npm. En Windows (PowerShell) o Linux:
 
 ```sh
-npm install
+npm ci
 npm run dev
 ```
 
-Abrir [CPM Studio local](http://127.0.0.1:5173). Si ese puerto está ocupado, Vite muestra otro en la terminal. La instalación inicial necesita acceso al registro de npm; después, la aplicación utiliza recursos locales y puede funcionar sin Internet mientras su servidor local permanezca activo.
-
-Para construir y servir la aplicación compilada:
+Abrir [CPM Studio local](http://127.0.0.1:5173). Si el puerto está ocupado, Vite indica otro. Para la versión compilada y la PWA:
 
 ```sh
 npm run build
 npm run preview -- --port 4173 --strictPort
 ```
 
-Abrir [la versión compilada](http://127.0.0.1:4173). `dist/` contiene los recursos estáticos y puede servirse desde otro servidor HTTP local. Abrir `index.html` mediante `file://` no es el modo de ejecución admitido.
+Abrir [la versión compilada](http://127.0.0.1:4173). `dist/` contiene los archivos estáticos. Se requiere HTTP localhost o HTTPS; `file://` no está admitido. La instalación inicial necesita Internet.
 
-## Uso
+## Flujo académico
 
-- Cargar el ejercicio guía o el ejemplo de catorce actividades para explorar resultados conocidos.
-- Crear sucesos en el lienzo y unirlos con actividades reales o ficticias. Seleccionar elementos para editar nombres, conexiones, duración, recursos, colores y recorridos. Arrastrar etiquetas y controles de recorrido para ajustar el dibujo.
-- Usar selección múltiple, deshacer/rehacer, cuadrícula, ajuste magnético, zoom, encuadre y distribución automática. Un arrastre completo se deshace como una operación.
-- En la tabla, introducir predecesoras y confirmar la celda. Las entradas incompletas quedan como borrador; las modificaciones estructurales que eliminan o reconectan elementos requieren confirmación. Cancelar conserva la red vigente y el borrador pendiente.
-- Consultar resultados por sucesos AOA o por precedencias. Los márgenes ML y MI pueden diferir por la ubicación de las ficticias. Las rutas críticas se enumeran por páginas, sin un límite oculto.
-- Guardar JSON para una copia portable; importar JSON para continuar en otro navegador o equipo. Exportar SVG o PNG para compartir el dibujo con sus fechas, etiquetas y colores.
+- **Red:** construcción manual o desde tabla; sucesos, actividades, ficticias, reconexión, selección múltiple y recorridos/etiquetas editables. Cuadrícula, encuadre e historial de 100 operaciones.
+- **Red resuelta:** rombos Ft/FT y triángulos ufc/pff calculados automáticamente, con distribución y anotaciones independientes de la red lógica.
+- **Resolución:** validación, ida, vuelta, fechas de actividad, márgenes y criticidad; fórmulas, sustituciones, alternativas y empates, con reproducción y navegación.
+- **Calendario y Gantt:** programaciones temprana/tardía con duración a escala y distinción entre ejecución, espera y holgura.
+- **Recursos:** carga simultánea por intervalos y consumo acumulado temprano/tardío. No nivela recursos.
+- **Informe:** redes, fechas, ambos tipos de márgenes, desarrollo y diagramas; HTML imprimible mediante el navegador.
 
-Las duraciones válidas son números finitos no negativos, incluidos cero y decimales. Los recursos son enteros no negativos; las ficticias tienen duración y recursos cero. Una red cíclica, desconectada o incompleta puede conservarse como borrador, pero no produce resultados definitivos. Se admiten múltiples comienzos y finales mediante fronteras virtuales de duración cero.
+Los ejemplos tienen duraciones 15 y 21. ML y MI por sucesos AOA pueden diferir de los márgenes por precedencias; ambas familias se identifican. Consultar [teoría](docs/theory.md).
 
-El guardado automático usa `localStorage` del navegador y del origen HTTP concreto: cambiar navegador, host o puerto puede mostrar otro proyecto guardado. Descargar JSON es la forma de transportarlo. Si la recuperación local falla, se informa el error y se evita sobrescribir los datos originales al abrir; una edición o la carga de otro proyecto habilita nuevamente el guardado. Los errores de cuota no descartan el proyecto abierto.
+Las entradas incompletas de tabla permanecen como borradores; cambios estructurales destructivos requieren confirmación. Cancelar conserva la red vigente. Las redes inválidas pueden guardarse, pero no presentan resultados definitivos. Duraciones finitas no negativas y recursos enteros no negativos; ficticias con duración/recursos cero.
 
-## Comprobar
+## Proyectos, exportación y offline
+
+La biblioteca IndexedDB permite crear, abrir, renombrar, duplicar y eliminar proyectos. El autoguardado conserva V2, preferencias, distribuciones, anotaciones y borradores. Selección e historial permanecen en memoria. JSON V1 se valida y migra sin modificar el original; el registro antiguo de localStorage se conserva como respaldo.
+
+JSON es la copia portable entre equipos, navegadores y orígenes: localhost y un dominio público tienen bibliotecas distintas. Los errores de cuota se muestran sin descartar el trabajo. Esperar la indicación de guardado y conservar copias JSON independientes.
+
+Redes/gráficos se exportan SVG/PNG; tablas, CSV; informe, HTML imprimible a PDF. PNG limita el lado mayor a 8192 píxeles. Todo se genera localmente.
+
+El informe presenta hasta diez rutas críticas y avisa cuando existen más; la aplicación permite recorrer todas mediante paginación incremental.
+
+En producción, esperar el aviso offline: se precachean también módulos diferidos y workers de vistas todavía no visitadas. Las actualizaciones requieren aceptación explícita después del guardado. Desarrollo no registra PWA.
+
+## Verificación y publicación
 
 ```sh
+npm run typecheck
+npm run lint
 npm test
 npm run build
-npx playwright install chromium firefox
+npx playwright install chromium firefox webkit
 npm run test:e2e
 ```
 
-Playwright descarga los navegadores en la instalación inicial y sirve `dist/` en `127.0.0.1:4173`; construir antes de ejecutar sus pruebas. En Linux, si faltan bibliotecas del sistema, usar `npx playwright install --with-deps chromium firefox` con los permisos correspondientes. El entorno de desarrollo de esta entrega es Windows; estos comandos documentan también el procedimiento para Linux, sin afirmar que haya sido ejecutado allí.
+En Linux usar `npx playwright install --with-deps chromium firefox webkit`. CI verifica los tres motores en Ubuntu. Con preview abierto, `npm run benchmark` mide 100/500 actividades y escribe `test-results/benchmark.json`.
 
-Las pruebas unitarias cubren el ejercicio guía (duración 15 y ruta A → C → E), las catorce actividades (duración 21 y ruta A → G → D → E → L), casos numéricos y de validación, equivalencia de precedencias, persistencia y exportación. Las pruebas de navegador cubren interacciones y recuperación en Chromium y Firefox. Para verificar funcionamiento desconectado, mantener el servidor local activo, desconectar Internet y repetir carga, edición, recarga y exportación; las solicitudes de la aplicación deben permanecer en el origen local.
-
-La entrega integra las fases 1–4. La verificación debe referirse al estado integrado actual; no se atribuyen ejecuciones históricas independientes a cada fase.
-
-La [verificación de esta entrega](docs/verification.md) registra las pruebas ejecutadas y sus límites.
+La [verificación](docs/verification.md) distingue evidencia y criterios pendientes. La [guía web](docs/web.md) explica ejecución, offline y Cloudflare. Wrangler y el workflow manual están preparados; crear Worker, vincular dominio y publicar son operaciones posteriores. No hay despliegue por push.
 
 ## Límites y mantenimiento
 
-CPM utiliza duraciones deterministas. No incluye estimación probabilística PERT, resolución didáctica, calendario, Gantt, gráficos ni nivelación de recursos. La generación AOA conserva las precedencias, pero no promete el mínimo número de ficticias. Las redes con muchas rutas pueden requerir tiempo y memoria al recorrerlas todas. PNG limita su dimensión mayor a 8192 píxeles; SVG conserva el formato vectorial.
+No incluye PERT probabilístico, calendarios laborales, retardos, restricciones de capacidad ni optimización de recursos. Los recursos son constantes por actividad. La generación AOA preserva precedencias, pero no promete el mínimo número de ficticias. Enumerar todas las rutas críticas puede requerir tiempo/memoria exponenciales. Cancelar workers evita continuar generación/disposición; no elimina el costo de renderizar redes grandes.
 
-Consultar [arquitectura y decisiones](docs/architecture.md). El código de CPM Studio se distribuye bajo [MIT](LICENSE). Las dependencias conservan sus licencias: React Flow usa MIT y ELK.js EPL-2.0. `npm run build` genera e incluye `THIRD_PARTY_NOTICES.txt` en `dist/`; conservar ese archivo al redistribuir. `npm run licenses` actualiza los avisos sin compilar.
+Consultar [arquitectura](docs/architecture.md), [contribución](CONTRIBUTING.md) e [historial](CHANGELOG.md). Código bajo [MIT](LICENSE). Dependencias con licencias propias; ELK.js utiliza EPL-2.0. Build genera `THIRD_PARTY_NOTICES.txt`: conservarlo al redistribuir `dist/`.

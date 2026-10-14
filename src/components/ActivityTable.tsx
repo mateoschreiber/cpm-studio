@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Copy, GitBranch, Plus, Trash2 } from "lucide-react";
 import { extractPrecedences, validateTable } from "../core/engine";
 import type { Project, TableRow } from "../core/types";
-import { uid } from "../store";
+import {emptyProject} from '../core/types';
+import { uid, useProjectStore } from "../store";
 import { CommitInput } from "./Fields";
 
-export function ActivityTable({
+export const ActivityTable = memo(function ActivityTable({
   project,
   syncToken,
   onApply,
@@ -23,9 +24,10 @@ export function ActivityTable({
   ) => void;
   busy: boolean;
 }) {
-  const signature = JSON.stringify(project.activities);
-  const canonical = useMemo(() => extractPrecedences(project), [signature]);
-  const [rows, setRows] = useState<TableRow[]>(canonical);
+  const setPresentation=useProjectStore(s=>s.setPresentation);
+  const canonical = useMemo(() => extractPrecedences({...emptyProject(),events:project.events,activities:project.activities}), [project.events,project.activities]);
+  const [rows, setRows] = useState<TableRow[]>(project.presentation?.draftRows??canonical);
+  const [openPicker,setOpenPicker]=useState<string|null>(null);
   const baseline = useRef({ canonical, syncToken });
   useEffect(() => {
     const old = baseline.current;
@@ -63,7 +65,8 @@ export function ActivityTable({
       ];
     });
   }, [canonical, syncToken]);
-  const dirty = JSON.stringify(rows) !== JSON.stringify(canonical);
+  const dirty = useMemo(()=>JSON.stringify(rows) !== JSON.stringify(canonical),[rows,canonical]);
+  useEffect(()=>{setPresentation({draftRows:dirty?rows:undefined});},[rows,dirty,setPresentation]);
   useEffect(() => {
     onDraftState(dirty);
   }, [dirty, onDraftState]);
@@ -195,14 +198,14 @@ export function ActivityTable({
                         })
                       }
                     />
-                    <details className="predecessor-picker">
+                    <details className="predecessor-picker" open={openPicker===row.id} onToggle={e=>{const open=e.currentTarget.open;setOpenPicker(current=>open?row.id:current===row.id?null:current);}}>
                       <summary
                         aria-label={`Seleccionar predecesoras de ${row.name}`}
                       >
                         <GitBranch size={13} />
                       </summary>
                       <div className="picker-options">
-                        {rows
+                        {openPicker===row.id&&rows
                           .filter((r) => r.id !== row.id)
                           .map((other) => (
                             <label key={other.id}>
@@ -222,7 +225,7 @@ export function ActivityTable({
                               {other.name}
                             </label>
                           ))}
-                        {rows.length < 2 && <span>Agrega otra actividad.</span>}
+                        {openPicker===row.id&&rows.length < 2 && <span>Agrega otra actividad.</span>}
                       </div>
                     </details>
                   </div>
@@ -312,4 +315,4 @@ export function ActivityTable({
       </div>
     </div>
   );
-}
+});

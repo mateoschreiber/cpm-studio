@@ -19,6 +19,22 @@ export interface EdgeVisual {
   color: string;
   width: number;
   points?: { x: number; y: number }[];
+  startLabel?: { x: number; y: number };
+  endLabel?: { x: number; y: number };
+}
+export type AppView = 'network' | 'resolved' | 'solution' | 'calendar' | 'gantt' | 'resources' | 'report';
+export type NodeSize = 'small' | 'normal' | 'large';
+export interface VisualModel { nodes: Record<string, {x:number;y:number}>; edges: Record<string, EdgeVisual> }
+export interface Presentation {
+  resolved?: VisualModel;
+  activeView: AppView;
+  nodeSize: NodeSize;
+  theme: 'system' | 'light' | 'dark';
+  motion: boolean;
+  timeScale: number;
+  rowOrder: string[];
+  rowOffsets: Record<string, number>;
+  draftRows?: TableRow[];
 }
 export interface Preferences {
   grid: boolean;
@@ -29,7 +45,9 @@ export interface Preferences {
   criticalColor: string;
 }
 export interface Project {
-  version: 1;
+  version: 1 | 2;
+  id?: string;
+  presentation?: Presentation;
   name: string;
   events: Event[];
   activities: Activity[];
@@ -39,6 +57,10 @@ export interface Project {
   };
   preferences: Preferences;
 }
+/** Persisted current format, after explicit validation and migration. */
+export type ProjectV2 = Project & {version:2;id:string;presentation:Presentation};
+export const defaultPresentation = (): Presentation => ({activeView:'network',nodeSize:'normal',theme:'system',motion:true,timeScale:48,rowOrder:[],rowOffsets:{}});
+export const nodeRadius = (project: Project) => ({small:23,normal:30,large:40})[project.presentation?.nodeSize ?? 'normal'];
 export interface TableRow {
   id: string;
   name: string;

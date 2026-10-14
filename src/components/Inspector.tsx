@@ -30,6 +30,7 @@ export function Inspector({
   onDelete: () => void;
 }) {
   const edit = useProjectStore((s) => s.edit);
+  const editVisual = useProjectStore((s) => s.editVisual);
   const event =
     selectedNodes.length === 1 && !selectedEdges.length
       ? project.events.find((e) => e.id === selectedNodes[0])
@@ -43,8 +44,8 @@ export function Inspector({
     ? (project.visual.edges[activity.id] ?? defaultEdgeVisual())
     : undefined;
   const updateVisual = (change: Partial<EdgeVisual>) =>
-    edit((p) => {
-      p.visual.edges[activity!.id] = { ...v!, ...change };
+    editVisual((visual) => {
+      visual.edges[activity!.id] = { ...v!, ...change };
     });
   const metric = activity ? result?.activities[activity.id] : undefined;
   return (
@@ -99,8 +100,8 @@ export function Inspector({
                   value={project.visual.nodes[event.id]?.[axis] ?? 0}
                   onCommit={(value) => {
                     if (value.trim() && Number.isFinite(Number(value)))
-                      edit((p) => {
-                        p.visual.nodes[event.id][axis] = Number(value);
+                      editVisual((visual) => {
+                        visual.nodes[event.id][axis] = Number(value);
                       });
                   }}
                 />
@@ -264,6 +265,7 @@ export function Inspector({
             </label>
           )}
           {v.kind === "segments" && (
+            <>
             <div className="inline-actions">
               <button
                 onClick={() => {
@@ -289,6 +291,26 @@ export function Inspector({
                 Restablecer
               </button>
             </div>
+            {(v.points ?? []).map((point, index) => <fieldset key={index} style={{ border: "1px solid var(--border)", borderRadius: 8, margin: "10px 0", padding: 8 }}>
+              <legend>Punto {index + 1}</legend>
+              <div className="field-pair">
+                {(["x", "y"] as const).map(axis => <label key={axis}>{axis.toUpperCase()}
+                  <CommitInput label={`Punto ${index + 1} ${axis.toUpperCase()}`} value={point[axis]} onCommit={text => {
+                    if (!text.trim() || !Number.isFinite(Number(text))) return;
+                    editVisual(visual => {
+                      const edge = visual.edges[activity.id];
+                      if (edge.points?.[index]) edge.points[index][axis] = Number(text);
+                    });
+                  }} />
+                </label>)}
+              </div>
+              <button aria-label={`Eliminar punto ${index + 1}`} onClick={() => editVisual(visual => {
+                const edge = visual.edges[activity.id];
+                edge.points = edge.points?.filter((_, i) => i !== index);
+                if (!edge.points?.length) { edge.kind = "straight"; edge.bend = 0; }
+              })}><Trash2 size={14} />Eliminar punto</button>
+            </fieldset>)}
+            </>
           )}
           <div className="field-pair">
             <label>
@@ -329,9 +351,21 @@ export function Inspector({
               </label>
             ))}
           </div>
+          {project.presentation?.activeView === "resolved" && (["startLabel", "endLabel"] as const).map(key => <fieldset key={key} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 8, margin: "10px 0" }}>
+            <legend>Triángulo {key === "startLabel" ? "ufc" : "pff"}</legend>
+            <div className="field-pair">
+              {(["x", "y"] as const).map(axis => <label key={axis}>Desplazamiento {axis.toUpperCase()}
+                <CommitInput label={`Triángulo ${key === "startLabel" ? "ufc" : "pff"} ${axis.toUpperCase()}`} value={v[key]?.[axis] ?? 0} onCommit={text => {
+                  if (!text.trim() || !Number.isFinite(Number(text))) return;
+                  updateVisual({ [key]: { x: v[key]?.x ?? 0, y: v[key]?.y ?? 0, [axis]: Number(text) } });
+                }} />
+              </label>)}
+            </div>
+          </fieldset>)}
           <p className="field-help">
-            Arrastra la etiqueta o los controles azules del recorrido. La
-            apariencia no cambia las precedencias.
+            Arrastra la etiqueta, los controles azules o el centro de un tramo.
+            Doble clic sobre una flecha inserta un punto; sobre un punto lo elimina.
+            La apariencia no cambia las precedencias.
           </p>
           {metric && (
             <div className="mini-margins">

@@ -1,4 +1,4 @@
-import type { Project } from "../core/types";
+import type { Project, ProjectV2 } from "../core/types";
 
 export const STORAGE_KEY = "cpm-studio.project.v1";
 const dangerous = new Set(["__proto__", "constructor", "prototype"]);
@@ -25,7 +25,7 @@ export function parseProject(text: string): Project {
   });
   if (
     !record(raw) ||
-    ![1, 2].includes(Number(raw.version)) ||
+    (raw.version !== 1 && raw.version !== 2) ||
     typeof raw.name !== "string" ||
     !Array.isArray(raw.events) ||
     !Array.isArray(raw.activities) ||
@@ -105,8 +105,8 @@ export function parseProject(text: string): Project {
   if (raw.version === 2 && (!identifier(raw.id) || !record(raw.presentation))) fail();
   if (raw.presentation !== undefined) {
     const v = raw.presentation;
-    if (!record(v) ||
-      !["network", "resolved", "solution", "calendar", "gantt", "resources", "report"].includes(String(v.activeView)) ||
+    if (!record(v)) return fail();
+    if (!["network", "resolved", "solution", "calendar", "gantt", "resources", "report"].includes(String(v.activeView)) ||
       !["small", "normal", "large"].includes(String(v.nodeSize)) ||
       !["system", "light", "dark"].includes(String(v.theme)) ||
       typeof v.motion !== "boolean" || !finite(v.timeScale) || v.timeScale <= 0 ||
@@ -117,7 +117,7 @@ export function parseProject(text: string): Project {
       parseProject(JSON.stringify({ ...raw, version: 1, presentation: undefined, visual: v.resolved }));
     }
     if (v.draftRows !== undefined) {
-      if (!Array.isArray(v.draftRows)) fail();
+      if (!Array.isArray(v.draftRows)) return fail();
       for (const row of v.draftRows) {
         if (!record(row) || !identifier(row.id) || typeof row.name !== "string" ||
           !Array.isArray(row.predecessors) || !row.predecessors.every(identifier) ||
@@ -130,7 +130,7 @@ export function parseProject(text: string): Project {
 }
 
 /** Explicit, non-mutating migration. Import validation itself never writes storage. */
-export function migrateProject(project: Project): Project {
+export function migrateProject(project: Project): ProjectV2 {
   const copy = structuredClone(project);
   return {
     ...copy,

@@ -1,6 +1,7 @@
-import { EPSILON, type CPMResult, type Project } from "../core/types";
+import { EPSILON, nodeRadius, type CPMResult, type Project } from "../core/types";
 import { edgeGeometry } from "./geometry";
 import { downloadFile } from "./persistence";
+import { academicSymbols, displayProject, eventCenter, isResolved } from "./presentation";
 const xml = (v: unknown) =>
   String(v).replace(
     /[&<>"']/g,
@@ -16,12 +17,9 @@ const xml = (v: unknown) =>
 const number = (v: number) =>
   Number(v.toFixed(6)).toLocaleString("es-PY", { maximumFractionDigits: 6 });
 export function exportSVG(project: Project, result?: CPMResult): string {
-  const bounds: { x: number; y: number }[] = Object.values(
-    project.visual.nodes,
-  ).flatMap((p) => [
-    { x: p.x - 15, y: p.y - 15 },
-    { x: p.x + 75, y: p.y + 75 },
-  ]);
+  project = displayProject(project);
+  const radius = nodeRadius(project), resolved = isResolved(project);
+  const bounds: { x: number; y: number }[] = [];
   const shapes: string[] = [];
   for (const a of project.activities) {
     const s = project.visual.nodes[a.source],
@@ -29,9 +27,10 @@ export function exportSVG(project: Project, result?: CPMResult): string {
       v = project.visual.edges[a.id];
     if (!s || !t || !v) continue;
     const g = edgeGeometry(
-      { x: s.x + 30, y: s.y + 30 },
-      { x: t.x + 30, y: t.y + 30 },
+      eventCenter(project, a.source),
+      eventCenter(project, a.target),
       v,
+      { radius, shape: resolved ? "diamond" : "circle" },
     );
     const critical =
       project.preferences.highlight && result?.activities[a.id]?.critical;
@@ -49,6 +48,13 @@ export function exportSVG(project: Project, result?: CPMResult): string {
     shapes.push(
       `<defs><marker id="${marker}" viewBox="0 0 10 10" markerWidth="7" markerHeight="7" refX="9" refY="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${xml(color)}"/></marker></defs><path d="${g.path}" fill="none" stroke="${xml(color)}" stroke-width="${v.width}"${a.dummy ? ' stroke-dasharray="7 5"' : ""} marker-end="url(#${marker})"/>`,
     );
+    if (resolved && result?.activities[a.id] && project.preferences.showDates) {
+      for (const symbol of academicSymbols(project, a, result)) {
+        const half = Math.max(24, number(symbol.value).length * 4 + 4);
+        bounds.push({ x: symbol.x - half, y: symbol.y - 24 }, { x: symbol.x + half, y: symbol.y + 24 });
+        shapes.push(`<g data-activity="${xml(a.id)}" data-kind="${symbol.kind}" transform="translate(${symbol.x},${symbol.y})"><title>${symbol.kind === "ufc" ? "Última fecha de comienzo" : "Primera fecha de finalización"}: ${number(symbol.value)}</title><polygon points="-16,-16 19,0 -16,16" transform="rotate(${symbol.angle})" fill="white" stroke="#16334a" stroke-width="1.5"/><text text-anchor="middle" dominant-baseline="central" fill="#16334a" font-size="12" font-weight="650">${number(symbol.value)}</text></g>`);
+      }
+    }
     shapes.push(
       `<g transform="translate(${g.label.x},${g.label.y})"><rect x="${-labelWidth / 2}" y="-13" width="${labelWidth}" height="${showMargin ? 39 : 26}" rx="5" fill="white"/><text text-anchor="middle" dominant-baseline="central" fill="${xml(color)}">${xml(text)}</text>${showMargin ? `<text y="19" text-anchor="middle" font-size="11" fill="#64748b">MT ${number(result?.activities[a.id]?.mt ?? 0)}</text>` : ""}</g>`,
     );
@@ -57,9 +63,10 @@ export function exportSVG(project: Project, result?: CPMResult): string {
     const p = project.visual.nodes[e.id];
     if (!p) continue;
     const label = project.preferences.showLabels ? e.label : "•";
+    const center = eventCenter(project, e.id), halfWidth = radius * (resolved ? 1.2 : 1);
     bounds.push(
-      { x: p.x + 30 - label.length * 4, y: p.y },
-      { x: p.x + 30 + label.length * 4, y: p.y + 60 },
+      { x: center.x - Math.max(halfWidth, label.length * 4), y: p.y - (resolved && project.preferences.showLabels ? 26 : 2) },
+      { x: center.x + Math.max(halfWidth, label.length * 4), y: p.y + radius * 2 + 2 },
     );
     const dates = result?.events[e.id];
     const critical =
@@ -67,9 +74,11 @@ export function exportSVG(project: Project, result?: CPMResult): string {
       dates &&
       Math.abs(dates.early - dates.late) < EPSILON;
     const border = critical ? project.preferences.criticalColor : "#284b63";
-    shapes.push(
-      `<g transform="translate(${p.x + 30},${p.y + 30})"><circle r="30" fill="white" stroke="${xml(border)}" stroke-width="2"/><text text-anchor="middle" y="${project.preferences.showDates ? -8 : 5}" fill="#16334a">${xml(label)}</text>${project.preferences.showDates ? `<path d="M -28 0 H 28 M 0 0 V 28" stroke="#cbd5e1"/><text x="-14" y="18" font-size="11" text-anchor="middle" fill="#16334a">${dates ? number(dates.early) : "—"}</text><text x="14" y="18" font-size="11" text-anchor="middle" fill="#16334a">${dates ? number(dates.late) : "—"}</text>` : ""}</g>`,
-    );
+    if (resolved) {
+      shapes.push(`<g data-event="${xml(e.id)}" transform="translate(${center.x},${center.y})"><polygon points="${-halfWidth},0 0,${-radius} ${halfWidth},0 0,${radius}" fill="#4f81bd" stroke="${xml(border)}" stroke-width="2"/><path d="M 0 ${-radius} V ${radius}" stroke="#284b63" stroke-width="2"/>${project.preferences.showLabels ? `<text text-anchor="middle" y="${-radius - 10}" fill="#16334a" font-weight="700">${xml(label)}</text>` : ""}${project.preferences.showDates ? `<text x="${-radius * .54}" y="5" text-anchor="middle" fill="white">${dates ? number(dates.early) : "—"}</text><text x="${radius * .54}" y="5" text-anchor="middle" fill="white">${dates ? number(dates.late) : "—"}</text>` : ""}</g>`);
+    } else {
+      shapes.push(`<g data-event="${xml(e.id)}" transform="translate(${center.x},${center.y})"><circle r="${radius}" fill="white" stroke="${xml(border)}" stroke-width="2"/><text text-anchor="middle" y="${project.preferences.showDates ? -8 : 5}" fill="#16334a">${xml(label)}</text>${project.preferences.showDates ? `<path d="M ${-radius + 2} 0 H ${radius - 2} M 0 0 V ${radius - 2}" stroke="#cbd5e1"/><text x="${-radius / 2 + 1}" y="${radius * .6}" font-size="11" text-anchor="middle" fill="#16334a">${dates ? number(dates.early) : "—"}</text><text x="${radius / 2 - 1}" y="${radius * .6}" font-size="11" text-anchor="middle" fill="#16334a">${dates ? number(dates.late) : "—"}</text>` : ""}</g>`);
+    }
   }
   const minX = Math.min(0, ...bounds.map((p) => p.x)) - 35,
     minY = Math.min(0, ...bounds.map((p) => p.y)) - 35,

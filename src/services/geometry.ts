@@ -4,6 +4,7 @@ export function edgeGeometry(
   source: Point,
   target: Point,
   visual: EdgeVisual,
+  options: {radius?:number;shape?:'circle'|'diamond'} = {},
 ): { path: string; label: Point; control: Point } {
   const dx = target.x - source.x,
     dy = target.y - source.y,
@@ -21,10 +22,12 @@ export function edgeGeometry(
   const first = visual.kind === "curve" ? control : (points[0] ?? target);
   const last = visual.kind === "curve" ? control : (points.at(-1) ?? source);
   const clip = (center: Point, toward: Point) => {
-    const d = Math.hypot(toward.x - center.x, toward.y - center.y) || 1;
+    const radius=options.radius ?? 30;
+    const dx=toward.x-center.x,dy=toward.y-center.y;
+    const d = options.shape==='diamond' ? (Math.abs(dx)/(radius*1.2)+Math.abs(dy)/radius || 1) : (Math.hypot(dx,dy)/radius || 1);
     return {
-      x: center.x + ((toward.x - center.x) / d) * 30,
-      y: center.y + ((toward.y - center.y) / d) * 30,
+      x: center.x + dx/d,
+      y: center.y + dy/d,
     };
   };
   const start = clip(source, first),

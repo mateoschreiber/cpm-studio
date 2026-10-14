@@ -1,0 +1,26 @@
+name: Error
+description: Informar un fallo reproducible
+body:
+  - type: textarea
+    id: steps
+    attributes:
+      label: Pasos para reproducir
+      description: Indicar la vista, acciones y resultado observado.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Resultado esperado
+      description: Para cálculos, incluir los datos mínimos y el resultado independiente esperado.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Navegador, sistema y versión de CPM Studio
+  - type: textarea
+    id: details
+    attributes:
+      label: Detalles adicionales
+      description: Adjuntar solo ejemplos sin información personal. No compartir credenciales.

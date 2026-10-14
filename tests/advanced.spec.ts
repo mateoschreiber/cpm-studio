@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { guideProject } from "../src/core/fixtures";
 import { generateAOA } from "../src/core/generate";
+import {readSavedProject} from './helpers';
 import type { TableRow } from "../src/core/types";
 
 async function load(page: Page) {
@@ -18,9 +19,7 @@ async function read(page: Page) {
   await expect(
     page.getByText("Guardado en este navegador", { exact: false }),
   ).toBeVisible();
-  return page.evaluate(() =>
-    JSON.parse(localStorage.getItem("cpm-studio.project.v1")!),
-  );
+  return readSavedProject(page);
 }
 async function drag(
   page: Page,
@@ -28,6 +27,9 @@ async function drag(
   dx: number,
   dy: number,
 ) {
+  // Device profiles use a 720px viewport in Firefox. Center the target so a
+  // downward drag releases inside the window and dispatches its mouseup.
+  await locator.evaluate(element => element.scrollIntoView({block:'center',inline:'center'}));
   const box = (await locator.boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
@@ -185,18 +187,8 @@ test("la recuperación dañada permanece intacta hasta una edición explícita",
   const title = page.getByLabel("Nombre del proyecto", { exact: true });
   await title.fill("Proyecto recuperado");
   await title.press("Enter");
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        try {
-          return JSON.parse(localStorage.getItem("cpm-studio.project.v1")!)
-            .name;
-        } catch {
-          return null;
-        }
-      }),
-    )
-    .toBe("Proyecto recuperado");
+  await expect.poll(async()=> (await readSavedProject(page))?.name).toBe("Proyecto recuperado");
+  expect(await page.evaluate(()=>localStorage.getItem("cpm-studio.project.v1"))).toBe("JSON dañado");
 });
 
 test("duración y recursos se actualizan aunque haya precedencias pendientes inválidas", async ({

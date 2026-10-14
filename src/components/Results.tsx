@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
   ChevronLeft,
@@ -8,9 +8,10 @@ import {
 } from "lucide-react";
 import { criticalPaths } from "../core/engine";
 import type { CPMResult, Project } from "../core/types";
+import {emptyProject} from '../core/types';
 import { numberText } from "../store";
 
-export function Results({
+export const Results = memo(function Results({
   project,
   result,
   errors,
@@ -27,13 +28,14 @@ export function Results({
   const [sort, setSort] = useState<"name" | "duration" | "mt">("name");
   const [descending, setDescending] = useState(false);
   const [page, setPage] = useState(0);
+  const logical=useMemo(()=>({...emptyProject(),events:project.events,activities:project.activities}),[project.events,project.activities]);
   const routes = useMemo(
     () => ({
-      iterator: result ? criticalPaths(project, result) : undefined,
+      iterator: result ? criticalPaths(logical, result) : undefined,
       cache: [] as string[][],
       done: false,
     }),
-    [result],
+    [result,logical],
   );
   useEffect(() => {
     setPage(0);
@@ -153,7 +155,7 @@ export function Results({
               </th>
               {(mode === "aoa"
                 ? ["Ft(i)", "FT(i)", "Ft(j)", "FT(j)"]
-                : ["ES", "LS", "EF", "LF"]
+                : ["pfc (ES)", "ufc (LS)", "pff (EF)", "uff (LF)"]
               ).map((h) => (
                 <th key={h}>{h}</th>
               ))}
@@ -277,4 +279,4 @@ export function Results({
       </div>
     </div>
   );
-}
+});

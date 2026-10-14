@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { guideProject } from "../src/core/fixtures";
+import {readSavedProject} from './helpers';
 
 async function guide(page: Page) {
   await page.goto("/");
@@ -13,14 +14,15 @@ async function saved(page: Page) {
   await expect(
     page.getByText("Guardado en este navegador", { exact: false }),
   ).toBeVisible();
-  return page.evaluate(() =>
-    JSON.parse(localStorage.getItem("cpm-studio.project.v1")!),
-  );
+  return readSavedProject(page);
 }
 async function commit(page: Page, label: string, value: string) {
   const input = page.getByRole("textbox", { name: label, exact: true });
   await input.fill(value);
   await input.press("Enter");
+  // WebKit can return from Enter before its blur handler has rendered the
+  // synchronous commit/busy state. Wait for that render before observing it.
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
 }
 test("resuelve ambos ejercicios y conserva los resultados al cambiar de panel", async ({
   page,
@@ -264,10 +266,15 @@ test("ingresa el ejercicio completo desde la tabla y obtiene una red editable eq
     await page
       .getByRole("button", { name: "Agregar actividad", exact: true })
       .click();
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+    await expect(page.locator('.app-shell')).toHaveAttribute('aria-busy','false');
     const confirm = page.getByRole("button", {
       name: "Confirmar actualización",
+      includeHidden: true,
     });
-    if (await confirm.isVisible()) await confirm.click();
+    // The dialog mounts with busy=false and opens in an effect. Its button can
+    // already exist while isVisible() is still false (particularly in WebKit).
+    if (await confirm.count()) await confirm.click();
     await expect(
       page.getByRole("textbox", { name: "Actividad A1", exact: true }),
     ).toBeVisible();
@@ -276,7 +283,8 @@ test("ingresa el ejercicio completo desde la tabla y obtiene una red editable eq
     await commit(page, `Recursos de ${name}`, resources);
     if (predecessors) {
       await commit(page, `Predecesoras de ${name}`, predecessors);
-      if (await confirm.isVisible()) await confirm.click();
+      await expect(page.locator('.app-shell')).toHaveAttribute('aria-busy','false');
+      if (await confirm.count()) await confirm.click();
     }
   }
   await expect(page.getByTestId("project-duration")).toHaveText("15");

@@ -137,9 +137,8 @@ export function validateTable(rows: TableRow[]): string[] {
 }
 /** The first real activities encountered backwards through dummy-only paths. */
 export function extractPrecedences(p: Project): TableRow[] {
-  const incoming = new Map(
-    p.events.map((e) => [e.id, p.activities.filter((a) => a.target === e.id)]),
-  );
+  const incoming = new Map(p.events.map((e) => [e.id, [] as Project['activities']]));
+  for (const a of p.activities) incoming.get(a.target)?.push(a);
   return p.activities
     .filter((a) => !a.dummy)
     .map((a) => {
@@ -192,9 +191,8 @@ export function solveCPM(p: Project): CPMResult {
     p.events.map((e) => e.id),
     p.activities.map((a) => [a.source, a.target]),
   );
-  const outgoing = new Map(
-    p.events.map((e) => [e.id, p.activities.filter((a) => a.source === e.id)]),
-  );
+  const outgoing = new Map(p.events.map((e) => [e.id, [] as Project['activities']]));
+  for (const a of p.activities) outgoing.get(a.source)!.push(a);
   const events: CPMResult["events"] = Object.fromEntries(
     order.map((id) => [id, { early: 0, late: Infinity }]),
   );
@@ -233,12 +231,9 @@ export function solveCPM(p: Project): CPMResult {
       a.predecessors.map((pre) => [pre, a.id] as [string, string]),
     ),
   );
-  const successors = new Map(
-    rows.map((a) => [
-      a.id,
-      rows.filter((b) => b.predecessors.includes(a.id)).map((b) => b.id),
-    ]),
-  );
+  const successors = new Map(rows.map((a) => [a.id, [] as string[]]));
+  for (const a of rows)
+    for (const pre of a.predecessors) successors.get(pre)!.push(a.id);
   for (const id of sorted) {
     const a = byId.get(id)!,
       es = Math.max(0, ...a.predecessors.map((pre) => logical[pre].ef));
@@ -273,21 +268,17 @@ export function solveCPM(p: Project): CPMResult {
 }
 /** Lazy depth-first enumeration; only emitted routes are retained for deduplication. */
 export function* criticalPaths(p: Project, r: CPMResult): Generator<string[]> {
-  const outgoing = new Map(
-    p.events.map((e) => [
-      e.id,
-      p.activities.filter(
-        (a) => a.source === e.id && r.activities[a.id]?.critical,
-      ),
-    ]),
-  );
-  const sources = p.events.filter(
-    (e) => !p.activities.some((a) => a.target === e.id),
-  );
+  const outgoing = new Map(p.events.map((e) => [e.id, [] as Project['activities']]));
+  const hasIncoming = new Set<string>(), hasOutgoing = new Set<string>();
+  for (const a of p.activities) {
+    hasIncoming.add(a.target);
+    hasOutgoing.add(a.source);
+    if (r.activities[a.id]?.critical) outgoing.get(a.source)?.push(a);
+  }
+  const sources = p.events.filter((e) => !hasIncoming.has(e.id));
   const seen = new Set<string>();
   function* walk(id: string, path: string[]): Generator<string[]> {
-    const all = p.activities.filter((a) => a.source === id);
-    if (!all.length) {
+    if (!hasOutgoing.has(id)) {
       if (Math.abs(r.events[id].early - r.duration) < EPSILON) {
         const key = JSON.stringify(path);
         if (!seen.has(key)) {

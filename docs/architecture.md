@@ -1,55 +1,45 @@
-# Arquitectura y decisiones de CPM Studio
+# Arquitectura de CPM Studio
 
-Estado: decisiones aplicadas al MVP de fases 1–4. Fecha: 13 de octubre de 2026.
+Decisiones de la evolución académica y web, 13 de octubre de 2026. Evidencia de ejecución en [verification.md](verification.md).
 
-## Proyecto canónico y separación de responsabilidades
+## Proyecto y cálculo
 
-`Project` contiene sucesos, actividades, presentación y preferencias. Sus identificadores internos estables no dependen del nombre editable. Las actividades guardan extremos AOA, duración, recursos y condición de ficticia; las posiciones, recorridos, etiquetas, colores y grosores viven en `visual`. El cálculo ignora esa presentación y no persiste resultados derivados.
+El proyecto canónico separa sucesos/actividades de presentación. Los IDs son independientes de etiquetas editables. La tabla deriva precedencias reales recorriendo ficticias hasta la frontera de actividades reales; sus cambios pendientes son borradores, no una segunda red aplicada.
 
-El motor TypeScript expone funciones puras: `validateGraph`, `validateTable`, `solveCPM`, `extractPrecedences`, `criticalPaths` y `generateAOA`. La interfaz valida y calcula a partir del proyecto vigente; una modificación lógica vuelve a resolverlo y una red inválida retira los resultados. Mover un nodo o una etiqueta no altera la matemática.
+V2 añade identidad y presentación: vista, tema, movimiento, tamaño, escala temporal, orden/desplazamiento de filas, borradores y distribución independiente de red resuelta. Red lógica conserva visual; resuelta tiene su modelo con respaldo en posiciones vigentes para elementos nuevos. displayProject, eventCenter y academicSymbols proyectan la representación compartida por lienzo/exportación. Los resultados no se persisten como fuente de verdad.
 
-La tabla es una vista derivada de la red. Para cada actividad real, `extractPrecedences` recorre hacia atrás caminos formados por ficticias hasta encontrar la primera frontera de actividades reales. Las ediciones pendientes de tabla son un borrador separado: no se presentan como red aplicada. Los resultados visibles se identifican como resultados de la red vigente cuando existe un borrador pendiente.
+El núcleo puro valida, resuelve CPM, extrae precedencias, genera AOA y enumera rutas. buildSolutionTrace explica el resultado; buildSchedule produce ejecución temprana/tardía; buildResourceProfile calcula carga/acumulación por intervalos. Fórmulas en [theory.md](theory.md).
 
-Zustand conserva el proyecto y las pilas de historial. Cada modificación trabaja sobre una copia; los gestos agrupan las actualizaciones intermedias en una entrada de deshacer. El historial permanece en memoria y no forma parte del JSON portable. Se eligió un almacén central para que lienzo, inspector y tabla compartan una sola red. La API utilizada sigue la [referencia oficial de `create`](https://zustand.docs.pmnd.rs/reference/apis/create.html).
+Se usan orden topológico e índices de adyacencia, fronteras virtuales y tolerancia 1e-9. La red manual debe ser conexa sin considerar orientación. Generación simplifica ficticias solo conservando DAG y cierre transitivo: equivalencia tiene prioridad sobre minimalidad.
 
-## Cálculo y equivalencia de redes
+## Estado, historial y trabajos
 
-Se resuelve un DAG mediante orden topológico. Todos los comienzos tienen frontera temprana cero y todos los finales comparten la duración máxima del proyecto como frontera tardía: equivale a agregar inicio y fin virtuales con actividades de duración cero. La red manual debe ser conexa si se ignora el sentido de las flechas; los componentes desconectados se consideran incompletos.
+Zustand/Immer producen parches directos/inversos. Máximo 100 comandos, un gesto por entrada y conservación estructural de ramas intactas. La revisión lógica cambia al modificar la red; la documental también sigue presentación. Mover anotaciones no recalcula CPM ni reinicia explicación. Un cambio lógico inválido retira resultados anteriores.
 
-Para una actividad AOA de duración `d`, entre sucesos `i` y `j`:
+generateInWorker y layoutInWorker comparten un único Web Worker activo. Comenzar otro trabajo o cancelJobs termina el anterior y rechaza con AbortError. IDs de solicitud impiden aceptar respuestas antiguas; completar/fallar termina el worker. ELK se importa dentro del worker cuando hace falta. La generación inicial dispone la red vacía; actualizaciones conservan posiciones reutilizables.
 
-```text
-Ft(j) = máximo de Ft(i) + d entre sus entradas
-FT(i) = mínimo de FT(j) - d entre sus salidas
-MT = FT(j) - Ft(i) - d
-ML = Ft(j) - Ft(i) - d
-MI = máximo(0, Ft(j) - FT(i) - d)
-```
+CPM sigue síncrono en el navegador. Gráficos/informe se cargan por módulos. No hay endpoints, backend ni colas remotas.
 
-La familia por precedencias calcula ES/EF hacia adelante y LS/LF hacia atrás. Define `MT = LS - ES`, `ML = mínimo ES de sucesoras - EF` y `MI = máximo(0, mínimo ES de sucesoras - máximo LF de predecesoras - d)`. Sin sucesoras, el mínimo es la duración global; sin predecesoras, el máximo es cero. Por ello ML y MI pueden cambiar entre representaciones AOA equivalentes; la interfaz conserva ambas familias para hacer visible esa diferencia.
+El editor se encapsula en EditorWorkspace; cálculo, biblioteca, trabajos, resolución, diagramas e informe tienen módulos independientes. Tabla/resultados reciben una proyección estable de la lógica: mover un nodo no vuelve a renderizar sus filas. Las opciones de predecesoras se construyen al abrir el selector, evitando cientos de miles de controles ocultos en redes de 500 actividades.
 
-La tolerancia absoluta es `EPSILON = 1e-9`, aplicada a residuos cercanos a cero y condición crítica; no se redondean las duraciones antes del cálculo. La presentación usa hasta seis decimales. Los valores muy grandes o diferencias por debajo de esa tolerancia requieren interpretar el resultado con esta precisión numérica.
+El desplazamiento automático durante arrastres está desactivado para mantener el encuadre bajo control del usuario; el lienzo conserva desplazamiento manual con botón central/derecho, zoom y encuadre. Las actualizaciones de posiciones idénticas se omiten. Las pruebas centran el nodo antes de arrastrar y mantienen la liberación dentro de la ventana, incluyendo ventanas de 720 píxeles de altura.
 
-`criticalPaths` es un generador de rutas críticas: omite ficticias en sus nombres y evita duplicados de rutas reales. La interfaz consume diez rutas por página y una de anticipación. No se calcula ni se trunca silenciosamente un listado completo inicial; al recorrer todas las páginas se retienen las rutas emitidas para navegación y deduplicación.
+## Presentación y exportación
 
-La generación AOA empieza con extremos propios de cada actividad, inicio/fin comunes y ficticias de precedencia. Elimina ficticias redundantes y contrae sucesos únicamente cuando se mantiene el DAG y coincide el cierre transitivo de precedencias reales. Comparar cierres permite aceptar precedencias explícitas transitivamente redundantes. Si una simplificación falla la comprobación, se conserva la construcción correcta. Se prioriza equivalencia sobre minimalidad.
+React Flow mantiene viewport y edición. Geometría compartida recorta círculos/rombos según radio 23/30/40; el rombo tiene semiancho 1,2 radios. Los triángulos toman valores del resultado y offsets visuales independientes.
 
-Si el cierre de una tabla editada coincide con el de la red anterior y conserva sus actividades, se reutiliza la red; así no se destruye un dibujo por una precedencia redundante. En cambios estructurales se reutilizan identificadores y posiciones cuando es posible, y se confirma cualquier eliminación o reconexión antes de reemplazar el proyecto.
+Calendario distingue ejecución de espera; Gantt muestra ejecución/holgura, y duración cero es un instante. Vistas temporales y recursos comparten render SVG con exportación e informe. Mover filas/escala no altera fechas.
 
-## Lienzo, distribución y exportación
+exportSVG conserva vista activa, ficticias, fechas y anotaciones; escapa texto e incluye símbolos desplazados en límites. PNG rasteriza ese SVG con máximo 8192 píxeles. CSV escapa campos y el informe HTML escapa textos; selección/controles no se exportan. Temas y movimiento son preferencias; la interfaz respeta movimiento reducido.
 
-React Flow proporciona interacción y viewport; nodos y flechas personalizados representan sucesos y actividades. Una función geométrica compartida calcula recorridos rectos, cuadráticos o segmentados, recorte en círculos de radio 30 y posición de etiqueta. Compartir esa geometría evita que la exportación use una ruta diferente del editor. Las [flechas personalizadas](https://reactflow.dev/learn/customization/custom-edges) y los eventos de edición siguen la [API oficial de React Flow](https://reactflow.dev/api-reference/react-flow).
+## Persistencia y web
 
-ELK.js se incluye en el paquete local y aplica distribución por capas de izquierda a derecha. Devuelve una copia con nuevas posiciones, sin modificar actividades ni estilos. Se usa al generar inicialmente y al pedir reorganización; no se vuelve a distribuir todo el dibujo tras cada edición. La integración sigue el [ejemplo oficial React Flow con ELK](https://reactflow.dev/examples/layout/elkjs) y la [API de ELK.js](https://github.com/kieler/elkjs).
+IndexedDB guarda proyectos completos; operaciones serializadas y autoguardado agrupado a 300 ms. Abrir otro proyecto intenta guardar el actual. Errores conservan trabajo en memoria. Transacciones al ocultar/cerrar no garantizan escritura: se recomiendan copias JSON.
 
-SVG se construye sin medios remotos y escapa los textos del usuario. Incluye ficticias discontinuas, actividad y duración, MT cuando se muestran resultados, fechas, numeración opcional y color crítico. PNG rasteriza ese mismo SVG mediante canvas; limita el lado mayor a 8192 píxeles para contener el tamaño de memoria. Las selecciones y los controles de edición no forman parte de la exportación.
+parseProject valida estructura, IDs, extremos, números, recursos y presentación; admite borradores matemáticamente inválidos estructuralmente válidos. Rechaza claves peligrosas y estilos remotos. migrateProject realiza V1→V2 explícito sin mutar original. La migración localStorage conserva origen y marca traslado después del commit IndexedDB.
 
-## Persistencia, compatibilidad y verificación
+Selección, viewport e historial son temporales; vistas, anotaciones, distribuciones y borradores son documentales. Bibliotecas son propias del origen; JSON permite trasladarlas.
 
-JSON usa `version: 1`, con `name`, `events`, `activities`, `visual` y `preferences`. No hay migración implícita de versiones desconocidas. `parseProject` valida estructura, identificadores únicos, extremos existentes, números finitos, recursos enteros no negativos, estilos y preferencias; rechaza claves peligrosas y colores que puedan referenciar recursos externos. Permite borradores matemáticamente inválidos, como ciclos o sucesos aislados con presentación válida. Importar primero valida y después ofrece reemplazar el proyecto; un archivo rechazado no cambia la red abierta.
+PWA precachea módulos, workers, iconos, fuentes locales y licencias. Actualiza mediante aviso sin activación automática forzada. Primera carga incompleta no garantiza offline. Cloudflare sirve dist con fallback SPA; workflow exclusivamente manual. CI ejecuta tipos, lint, pruebas, build y Playwright Ubuntu; mediciones locales se registran aparte.
 
-El guardado automático escribe bajo `cpm-studio.project.v1` en `localStorage`. La recuperación captura errores sin borrar datos. Si falla al arrancar, la aplicación suspende la escritura automática inicial hasta que se edite o cargue otro proyecto; evita reemplazar el original con el proyecto vacío de recuperación. La descarga JSON permite copia y traslado entre orígenes. Posiciones, recorridos y preferencias se restauran; selección, zoom, historial y borradores de tabla no se guardan.
-
-Vitest verifica fechas y márgenes independientes, validaciones, DAG generados, equivalencia de cierres y márgenes totales, persistencia, geometría, exportación y estado. Playwright utiliza la compilación estática en Chromium y Firefox para verificar edición y recuperación. Los comandos reproducibles están en el README; la evidencia final corresponde a la integración de las cuatro fases. Linux requiere ejecutar ese procedimiento antes de afirmar compatibilidad verificada.
-
-No existe API HTTP de aplicación, servidor de datos, autenticación ni envío de proyectos a servicios externos. Las dependencias se instalan antes de trabajar sin Internet. Al distribuir el paquete deben mantenerse sus avisos y licencias, incluida EPL-2.0 de ELK.js.
+Referencias: [React Flow](https://reactflow.dev/learn/advanced-use/performance), [Zustand](https://zustand.docs.pmnd.rs/reference/apis/create.html), [ELK.js](https://github.com/kieler/elkjs), [Vite PWA](https://vite-pwa-org.netlify.app/guide/prompt-for-update), [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API). Procedimientos en [web.md](web.md).

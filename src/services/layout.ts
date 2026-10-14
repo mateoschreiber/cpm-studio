@@ -1,7 +1,13 @@
 import type { Project } from "../core/types";
+import elkWorkerURL from 'elkjs/lib/elk-worker.min.js?url';
 export async function layoutProject(project: Project): Promise<Project> {
-  const { default: ELK } = await import("elkjs/lib/elk.bundled.js");
-  const elk = new ELK();
+  // Node uses ELK's synchronous worker shim; browsers use an actual local worker.
+  const nodeModule='elkjs/lib/elk.bundled.js';
+  const module:typeof import('elkjs/lib/elk-api.js') = typeof Worker==='undefined' ? await import(/* @vite-ignore */ nodeModule) : await import('elkjs/lib/elk-api.js');
+  const candidate=module.default as unknown;
+  const ELK=(typeof candidate==='function'?candidate:(candidate as {default:typeof module.default}).default) as typeof module.default;
+  const elk = typeof Worker==='undefined'?new ELK():new ELK({workerFactory:()=>new Worker(elkWorkerURL)});
+  try {
   const graph = await elk.layout({
     id: "root",
     layoutOptions: {
@@ -23,4 +29,5 @@ export async function layoutProject(project: Project): Promise<Project> {
   for (const node of graph.children ?? [])
     next.visual.nodes[node.id] = { x: node.x ?? 0, y: node.y ?? 0 };
   return next;
+  } finally {if(typeof Worker!=='undefined')elk.terminateWorker();}
 }

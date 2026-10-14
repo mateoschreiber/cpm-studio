@@ -27,6 +27,15 @@ describe("historial de proyecto", () => {
     s.redo();
     expect(useProjectStore.getState().project.name).toBe("paso 2");
   });
+  it('los cambios visuales no invalidan la revisión lógica y el historial se limita a 100', () => {
+    const s = useProjectStore.getState();
+    const revision = s.logicalRevision;
+    for (let i=0;i<120;i++) s.edit(p => {p.name = `Nombre ${i}`;});
+    expect(useProjectStore.getState().logicalRevision).toBe(revision);
+    expect(useProjectStore.getState().past).toHaveLength(100);
+    s.edit(p => {p.events.push({id:'n',label:'0'});});
+    expect(useProjectStore.getState().logicalRevision).toBe(revision+1);
+  });
   it("una edición nueva invalida rehacer sin mutar estados previos", () => {
     const s = useProjectStore.getState();
     const original = s.project;
