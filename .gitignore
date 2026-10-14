@@ -1,0 +1,12 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+*.tsbuildinfo
+*.log
+.superpowers/
+.tools/
+artifacts/
+.env*
+!.env.example
+.wrangler/
